@@ -1,6 +1,7 @@
 """
 OpenCV rendering: draws the MediaPipe skeleton, rep count, state text,
-and a colored form score bar onto the frame.
+a colored form score bar, and now confirmed form-error labels with a
+3-tier color coding (green/yellow/red) onto the frame.
 """
 import cv2
 import mediapipe as mp
@@ -31,7 +32,6 @@ def draw_hud(frame: np.ndarray, exercise_name: str, counter_output: dict, good_r
     """Draws rep count, current state, and angle reading in the top-left corner."""
     h, w = frame.shape[:2]
 
-    # Semi-transparent HUD background panel
     overlay = frame.copy()
     cv2.rectangle(overlay, (0, 0), (320, 130), COLOR_TEXT_BG, -1)
     frame = cv2.addWeighted(overlay, 0.6, frame, 0.4, 0)
@@ -51,7 +51,6 @@ def draw_hud(frame: np.ndarray, exercise_name: str, counter_output: dict, good_r
     cv2.putText(frame, angle_text, (10, 110),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 
-    # Form score bar (top-right)
     form_pct = (good_reps / total_reps * 100) if total_reps > 0 else 100
     bar_color = COLOR_GOOD if form_pct >= 80 else COLOR_WARNING if form_pct >= 50 else COLOR_ERROR
     bar_x, bar_y, bar_w, bar_h = w - 220, 10, 200, 25
@@ -64,9 +63,47 @@ def draw_hud(frame: np.ndarray, exercise_name: str, counter_output: dict, good_r
     return frame
 
 
-def draw_status_box(frame: np.ndarray, ok: bool) -> np.ndarray:
-    """Draws a colored border around the frame: green if form is fine, red if a form error is flagged."""
-    color = COLOR_GOOD if ok else COLOR_ERROR
+def draw_form_alerts(frame: np.ndarray, confirmed_errors: dict, raw_errors: dict) -> np.ndarray:
+    """
+    Draws a label for each form check underneath the HUD, in the bottom-left corner.
+
+    confirmed_errors: dict of {error_name: bool} — True means the FormErrorBuffer
+                       has confirmed this as sustained, real error (RED).
+    raw_errors: dict of {error_name: bool} — True means the raw detector fired
+                 this frame but hasn't been confirmed yet (YELLOW warning).
+    Neither True = GREEN (good form for that check).
+    """
+    h, w = frame.shape[:2]
+    y_start = h - 20 - (25 * len(confirmed_errors))
+
+    for i, (name, confirmed) in enumerate(confirmed_errors.items()):
+        raw = raw_errors.get(name, False)
+
+        if confirmed:
+            color = COLOR_ERROR
+            status = "ERROR"
+        elif raw:
+            color = COLOR_WARNING
+            status = "WARNING"
+        else:
+            color = COLOR_GOOD
+            status = "OK"
+
+        y = y_start + i * 25
+        label = name.replace("_", " ").title()
+        cv2.putText(frame, f"{label}: {status}", (10, y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
+
+    return frame
+
+
+def draw_status_box(frame: np.ndarray, severity: str = "good") -> np.ndarray:
+    """
+    Draws a colored border around the frame.
+    severity: "good" (green), "warning" (yellow), or "error" (red).
+    """
+    color_map = {"good": COLOR_GOOD, "warning": COLOR_WARNING, "error": COLOR_ERROR}
+    color = color_map.get(severity, COLOR_GOOD)
     h, w = frame.shape[:2]
     cv2.rectangle(frame, (0, 0), (w - 1, h - 1), color, 8)
     return frame

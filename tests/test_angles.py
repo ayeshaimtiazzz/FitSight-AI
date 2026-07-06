@@ -21,3 +21,26 @@ def test_acute_angle():
 def test_degenerate_case_does_not_crash():
     angle = AngleCalculator.calculate_angle((0, 0), (0, 0), (1, 0))
     assert angle == 180.0
+
+def test_vertical_deviation_no_deviation():
+    # Point sits exactly on the straight line between top and bottom
+    deviation = AngleCalculator.vertical_deviation(
+        point=(0.5, 0.6), ref_top=(0.5, 0.4), ref_bottom=(0.5, 0.8)
+    )
+    assert deviation == 0.0
+
+
+def test_vertical_deviation_measures_lateral_offset():
+    # Point is 0.15 units to the left of the straight line
+    deviation = AngleCalculator.vertical_deviation(
+        point=(0.35, 0.6), ref_top=(0.5, 0.4), ref_bottom=(0.5, 0.8)
+    )
+    assert round(deviation, 2) == 0.15
+
+
+def test_vertical_deviation_handles_horizontal_reference_line():
+    # Edge case: ref_top and ref_bottom have the same y — avoids divide-by-zero
+    deviation = AngleCalculator.vertical_deviation(
+        point=(0.6, 0.5), ref_top=(0.5, 0.5), ref_bottom=(0.8, 0.5)
+    )
+    assert round(deviation, 2) == 0.10
