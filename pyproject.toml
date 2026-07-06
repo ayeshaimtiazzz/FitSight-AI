@@ -10,6 +10,10 @@ python = ">=3.10,<3.13"
 mediapipe = "0.10.21"
 opencv-python = "^4.10.0"
 numpy = "^1.26.4"
+python-dotenv = "^1.2.2"
+pyttsx3 = "^2.99"
+pillow = "^12.3.0"
+google-genai = "^2.10.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.2.0"
