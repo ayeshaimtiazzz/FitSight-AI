@@ -1,0 +1,23 @@
+[tool.poetry]
+name = "fitness-coach"
+version = "0.1.0"
+description = "CPU-first real-time AI fitness coaching app"
+authors = ["Ayesha"]
+package-mode = false
+
+[tool.poetry.dependencies]
+python = ">=3.10,<3.13"
+mediapipe = "0.10.21"
+opencv-python = "^4.10.0"
+numpy = "^1.26.4"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.2.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
