@@ -1,7 +1,7 @@
 """
 Entrypoint: runs the webcam loop, wires together PoseLandmarker, the selected
-exercise counter, form-error detectors, VLM coaching feedback, TTS, and the
-OpenCV renderer.
+exercise counter, form-error detectors, VLM coaching feedback, TTS, session
+storage (SQLite), and the OpenCV renderer.
 
 Usage:
     poetry run python -m fitness_coach.main --exercise squat
@@ -9,7 +9,10 @@ Usage:
     poetry run python -m fitness_coach.main --exercise curl
 """
 import argparse
+import json
+import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 
 import cv2
 
@@ -30,6 +33,8 @@ from fitness_coach.pipeline.renderer import (
     draw_status_box,
 )
 from fitness_coach.pose.landmarker import PoseLandmarker
+from fitness_coach.storage.db import get_db_session, init_db
+from fitness_coach.storage.models import CoachingFeedback, RepEvent, WorkoutSession
 
 COUNTER_MAP = {
     "squat": SquatCounter,
@@ -37,30 +42,32 @@ COUNTER_MAP = {
     "curl": CurlCounter,
 }
 
-FORM_CHECKS_MAP = {
-    "squat": {
-        "knee_valgus": KneeValgusDetector(),
-        "back_rounding": BackRoundingDetector(),
-    },
-    "pushup": {
-        "elbow_flare": ElbowFlareDetector(),
-        "back_rounding": BackRoundingDetector(),
-    },
-    "curl": {},
-}
+def build_form_checks(exercise: str, side: str) -> dict:
+    if exercise == "squat":
+        return {
+            "knee_valgus": KneeValgusDetector(side=side),
+            "back_rounding": BackRoundingDetector(side=side),
+        }
+    elif exercise == "pushup":
+        return {
+            "elbow_flare": ElbowFlareDetector(side=side),
+            "back_rounding": BackRoundingDetector(side=side),
+        }
+    return {}
 
 COACHING_INTERVAL = 10  # generate feedback every N reps
 
 
 def main():
-    parser = argparse.ArgumentParser(description="FitSight AI - Phase 3 VLM Coaching")
+    parser = argparse.ArgumentParser(description="FitSight AI - Phase 4 Storage & Analytics")
     parser.add_argument("--exercise", choices=COUNTER_MAP.keys(), default="squat")
+    parser.add_argument("--side", choices=["LEFT", "RIGHT"], default="LEFT", help="Which side's landmarks to track")
     parser.add_argument("--camera", type=int, default=0, help="Webcam index")
     parser.add_argument("--no-voice", action="store_true", help="Disable TTS voice feedback")
     args = parser.parse_args()
 
-    counter = COUNTER_MAP[args.exercise]()
-    form_checks = FORM_CHECKS_MAP[args.exercise]
+    counter = COUNTER_MAP[args.exercise](side=args.side)
+    form_checks = build_form_checks(args.exercise, args.side)
     error_buffers = {name: FormErrorBuffer(window_size=10, confirm_ratio=0.7) for name in form_checks}
 
     frame_buffer = FrameBuffer(maxlen=30)
@@ -74,6 +81,15 @@ def main():
     good_reps = 0
     total_reps = 0
 
+    # --- Phase 4: initialize database and create this session's record ---
+    init_db()
+    db = get_db_session()
+    db_session = WorkoutSession(exercise=args.exercise, date=datetime.utcnow())
+    db.add(db_session)
+    db.commit()  # commit now so db_session.id is populated for foreign keys
+
+    session_start_time = time.time()
+
     def _on_feedback_ready(future, exercise_name, rep_count):
         nonlocal latest_feedback_text
         try:
@@ -84,6 +100,15 @@ def main():
         print(f"\n[Coaching @ rep {rep_count}] {feedback}\n")
         if speech_engine:
             speech_engine.speak(feedback)
+
+        # --- Phase 4: persist the coaching note ---
+        note = CoachingFeedback(
+            session_id=db_session.id,
+            rep_number=rep_count,
+            feedback_text=feedback,
+        )
+        db.add(note)
+        db.commit()
 
     cap = cv2.VideoCapture(args.camera)
     if not cap.isOpened():
@@ -130,6 +155,21 @@ def main():
                     if not any_confirmed and not counter_flagged_error:
                         good_reps += 1
 
+                    # --- Phase 4: persist this rep event ---
+                    errors_this_rep = [name for name, is_err in confirmed_errors.items() if is_err]
+                    if counter_flagged_error:
+                        errors_this_rep.append("alignment_error")
+
+                    rep_event = RepEvent(
+                        session_id=db_session.id,
+                        timestamp=datetime.utcnow(),
+                        joint_angle=current_angle,
+                        form_errors_json=json.dumps(errors_this_rep),
+                        is_good_form=0 if errors_this_rep else 1,
+                    )
+                    db.add(rep_event)
+                    db.commit()
+
                     # Every COACHING_INTERVAL reps, kick off a background VLM call
                     if counter.rep_count > 0 and counter.rep_count % COACHING_INTERVAL == 0:
                         peak_frame = frame_buffer.get_peak_frame(mode="min")
@@ -160,10 +200,19 @@ def main():
                 cv2.putText(frame, "No pose detected", (10, 30),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
-            cv2.imshow("FitSight AI - Phase 3", frame)
+            cv2.imshow("FitSight AI - Phase 4", frame)
 
             if cv2.waitKey(1) & 0xFF == ord("q"):
                 break
+
+    # --- Phase 4: finalize the session record before shutting down ---
+    duration = time.time() - session_start_time
+    db_session.duration_seconds = duration
+    db_session.total_reps = counter.rep_count
+    db_session.good_form_reps = good_reps
+    db_session.avg_form_score = (good_reps / total_reps * 100) if total_reps > 0 else 100.0
+    db.commit()
+    db.close()
 
     cap.release()
     cv2.destroyAllWindows()
@@ -171,6 +220,7 @@ def main():
     if speech_engine:
         speech_engine.stop()
     print(f"Session ended. Total reps: {counter.rep_count}, Good form reps: {good_reps}")
+    print(f"Session saved to database (session_id={db_session.id}, duration={duration:.1f}s)")
 
 
 def _draw_wrapped_text(frame, text, font_scale=0.5, line_height=20, max_lines=6):

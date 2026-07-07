@@ -44,3 +44,19 @@ def test_vertical_deviation_handles_horizontal_reference_line():
         point=(0.6, 0.5), ref_top=(0.5, 0.5), ref_bottom=(0.8, 0.5)
     )
     assert round(deviation, 2) == 0.10
+
+def test_3d_right_angle():
+    angle = AngleCalculator.calculate_angle_3d((0, 1, 0), (0, 0, 0), (1, 0, 0))
+    assert round(angle, 1) == 90.0
+
+
+def test_3d_depth_movement_does_not_fake_a_bend():
+    # Arm fully extended, but the wrist moves toward the camera (z changes).
+    # A correct 3D angle should stay close to 180 despite the z shift —
+    # this is exactly the false-positive case the fix addresses.
+    angle = AngleCalculator.calculate_angle_3d(
+        a=(0, -1, 0),      # shoulder
+        b=(0, 0, 0),       # elbow
+        c=(0, 1, -0.3),    # wrist, same straight-line direction but closer to camera
+    )
+    assert angle > 150  # still reads as nearly straight, not falsely bent

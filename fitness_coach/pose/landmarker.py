@@ -23,12 +23,12 @@ class LandmarkResult:
     detected: bool = False
     raw_results: Optional[object] = None  # kept for drawing utilities
 
-    def get_xy(self, name: str) -> Tuple[float, float]:
-        """Convenience accessor returning just (x, y) for angle calculations."""
-        lm = self.landmarks.get(name)
-        if lm is None:
-            raise KeyError(f"Landmark '{name}' not found in this frame's result.")
-        return (lm[0], lm[1])
+    def get_xyz(self, name: str):
+            """Returns full (x, y, z) for 3D angle calculations."""
+            lm = self.landmarks.get(name)
+            if lm is None:
+                raise KeyError(f"Landmark '{name}' not found in this frame's result.")
+            return (lm[0], lm[1], lm[2])
 
     def visibility(self, name: str) -> float:
         lm = self.landmarks.get(name)
